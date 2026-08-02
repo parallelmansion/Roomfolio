@@ -35,6 +35,8 @@ Roomfolio の体験を補完するプロフィールページです。
 
 Room GUIDE や家具から自然にアクセスできることを想定しています。
 
+現在はページリンクがついていますが、このページは基本的には解説ページを想定しており、リンクはRoomfolio側でまとめる想定です。
+
 https://parallel-mansion-home.vercel.app/201-inc/
 
 ---
@@ -43,7 +45,7 @@ https://parallel-mansion-home.vercel.app/201-inc/
 
 Roomfolio が目指す体験
 
-- 部屋を歩くことで作者を知る
+- 部屋を訪れることで作者を知る
 - 家具からコンテンツへ自然につながる
 - 「作品を見る」ではなく「部屋に遊びに行く」感覚
 - Roomfolio と Index がひとつのプロフィールとして機能する
