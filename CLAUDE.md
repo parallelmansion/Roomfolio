@@ -35,8 +35,6 @@ Blueprint.md に仕様が存在しない場合は、
 
 推測による実装は行わないでください。
 
-ユーザーが Blueprint.md を更新したあとに、
-その内容を正として実装してください。
 
 ---
 
@@ -176,7 +174,7 @@ Roomfolio は、
 2. VISION.md
    開発思想・目指す体験
 
-3. ## Blueprint.md
+3. Blueprint.md
    サービス仕様（唯一の仕様書）
 
 4. ROADMAP.md
