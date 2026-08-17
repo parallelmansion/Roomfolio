@@ -1473,23 +1473,7 @@
     </main>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
-    /*
-     * Roomfolio / Supabase
-     * このHTMLはブラウザからSupabaseへ直接接続します。
-     * Publishable keyはフロントエンド利用を前提としたキーです。
-     */
-    const SUPABASE_URL = "https://ziffnnsgouvsfkxnoqos.supabase.co";
-    const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_I1-V0IFZN7ufm4tH6jGJRQ_q0Vmhyqv";
-    const STORAGE_BUCKET = "roomfolio";
-    const TEST_ROOM_ID = "81aa5b8f-b9d3-43a0-a9c6-a6618711ae93";
-
-    const supabaseClient = window.supabase.createClient(
-      SUPABASE_URL,
-      SUPABASE_PUBLISHABLE_KEY
-    );
-
     const DEFAULT_BACKGROUND = {
       id: "default",
       label: "Default",
@@ -1729,8 +1713,7 @@
     ];
 
     const state = {
-      roomId: TEST_ROOM_ID,
-      backgroundId: "default",
+      roomId: "",
       backgroundUploadUrl: "",
       backgroundUploadName: "",
       backgroundUploadStatus: "",
@@ -1861,9 +1844,8 @@ const assetLinkPopupClose = document.getElementById("assetLinkPopupClose");
 
 const saveButton = document.getElementById("applyBtn");
 
-const SAVE_SCHEMA_VERSION = 2;
-const SAVE_STORAGE_KEY = "roomfolio.prototype.editDraft.v2";
-const SUPABASE_ROOM_ID_KEY = "roomfolio.currentRoomId.v1";
+const SAVE_SCHEMA_VERSION = 1;
+const SAVE_STORAGE_KEY = "roomfolio.prototype.editDraft.v1";
 const FRAME_ADJUST_DEFAULT = {
   x: 50,
   y: 50,
@@ -1984,157 +1966,68 @@ linkLayout: "horizontal"
       element.style.setProperty("--frame-adjust-scale", String(normalized.scale));
     }
 
-async function loadSavedData(){
-  /*
-   * localStorageからの復元ではなく、Supabaseのrooms / assets / linksから復元します。
-   * room_idはURLの ?room_id=、localStorageの現在Room、テストRoomの順で決めます。
-   */
-  const params = new URLSearchParams(window.location.search);
-  const roomIdFromUrl = params.get("room_id");
-  const savedRoomId = localStorage.getItem(SUPABASE_ROOM_ID_KEY);
+function loadSavedData(){
+  const raw = localStorage.getItem(SAVE_STORAGE_KEY);
 
-  const candidateRoomId = roomIdFromUrl || savedRoomId || state.roomId || TEST_ROOM_ID;
-
-  if (candidateRoomId) {
-    state.roomId = candidateRoomId;
+  if (!raw) {
+    return false;
   }
 
   try {
-    const { data: room, error: roomError } = await supabaseClient
-      .from("rooms")
-      .select("id, user_id, background, theme, is_published")
-      .eq("id", state.roomId)
-      .maybeSingle();
+    const savedData = JSON.parse(raw);
 
-    if (roomError) {
-      throw roomError;
-    }
-
-    if (!room) {
-      localStorage.setItem(SUPABASE_ROOM_ID_KEY, state.roomId);
+    if (!savedData || savedData.schemaVersion !== SAVE_SCHEMA_VERSION) {
       return false;
     }
 
-    if (room.background) {
-      const isPreset = rooms.some(item => item.src === room.background);
-      if (isPreset) {
-        const preset = rooms.find(item => item.src === room.background);
-        state.backgroundId = preset?.id || "default";
-        state.backgroundUploadUrl = "";
-        state.backgroundUploadName = "";
-      } else {
-        state.backgroundUploadUrl = room.background;
-        state.backgroundUploadName = "Supabase Storage";
-        state.backgroundUploadStatus = "Supabaseから読み込みました";
+    if (savedData.state) {
+      if (rooms.some(room => room.id === savedData.state.roomId)) {
+        state.roomId = savedData.state.roomId;
+      }
+
+      state.backgroundUploadUrl = String(savedData.state.backgroundUploadUrl || "");
+      state.backgroundUploadName = String(savedData.state.backgroundUploadName || "");
+      state.backgroundUploadStatus = String(savedData.state.backgroundUploadStatus || "");
+      state.backgroundUploadAspect = Number(savedData.state.backgroundUploadAspect) || 1;
+
+      if (frames.some(frame => frame.id === savedData.state.frameId)) {
+        state.frameId = savedData.state.frameId;
       }
     }
 
-    if (room.theme && frames.some(frame => frame.id === room.theme)) {
-      state.frameId = room.theme;
+    if (Array.isArray(savedData.assetBlocks)) {
+      assetBlocks.length = 0;
+
+      savedData.assetBlocks.slice(0, 8).forEach(savedBlock => {
+        const block = {
+          ...savedBlock,
+          title: String(savedBlock.title || ""),
+          description: String(savedBlock.description || ""),
+          links: Array.isArray(savedBlock.links)
+            ? savedBlock.links
+            : [],
+          frameImageAdjust: normalizeFrameImageAdjust(savedBlock.frameImageAdjust)
+        };
+
+        normalizeBlockSelection(block);
+        normalizePlacementState(block);
+
+        assetBlocks.push(block);
+
+        assetBlockSeq = Math.max(
+          assetBlockSeq,
+          Number(block.id) || 0
+        );
+      });
     }
 
-    const { data: assetRows, error: assetError } = await supabaseClient
-      .from("assets")
-      .select("*")
-      .eq("room_id", room.id)
-      .order("sort_order", { ascending: true });
-
-    if (assetError) {
-      throw assetError;
-    }
-
-    const assetIds = (assetRows || []).map(row => row.id);
-
-    let linkRows = [];
-    if (assetIds.length > 0) {
-      const { data: fetchedLinks, error: linkError } = await supabaseClient
-        .from("links")
-        .select("*")
-        .in("asset_id", assetIds)
-        .order("sort_order", { ascending: true });
-
-      if (linkError) {
-        throw linkError;
-      }
-
-      linkRows = fetchedLinks || [];
-    }
-
-    assetBlocks.length = 0;
-    assetBlockSeq = 0;
-
-    (assetRows || []).slice(0, 8).forEach((row) => {
-      const type = ["frame", "object", "original"].includes(row.asset_type)
-        ? row.asset_type
-        : "frame";
-
-      const linksForAsset = linkRows
-        .filter(link => link.asset_id === row.id)
-        .map((link, index) => ({
-          id: index + 1,
-          title: String(link.title || ""),
-          url: String(link.url || "")
-        }));
-
-      const selectedFrame = frameAssets.find(item => item.src === row.frame_asset);
-      const selectedObject = objectAssets.find(item => item.src === row.object_asset);
-
-      const block = {
-        id: ++assetBlockSeq,
-        type,
-        selectedAssetId:
-          type === "frame"
-            ? (selectedFrame?.id || frameAssets[0]?.id || "")
-            : type === "object"
-              ? (selectedObject?.id || objectAssets[0]?.id || "")
-              : "",
-        uploadUrl:
-          type === "original"
-            ? String(row.original_image_url || row.image_url || "")
-            : "",
-        uploadName: "",
-        uploadStatus:
-          type === "original" && (row.original_image_url || row.image_url)
-            ? "Supabaseから読み込みました"
-            : "",
-        uploadAspect: 1,
-        frameUploadUrl:
-          type === "frame"
-            ? String(row.image_url || row.original_image_url || "")
-            : "",
-        frameUploadName: "",
-        frameUploadStatus:
-          type === "frame" && (row.image_url || row.original_image_url)
-            ? "Supabaseから読み込みました"
-            : "",
-        frameUploadAspect: 1,
-        frameImageAdjust: normalizeFrameImageAdjust({
-          x: row.frame_image_x,
-          y: row.frame_image_y,
-          scale: row.frame_image_scale
-        }),
-        title: String(row.title || ""),
-        description: String(row.description || ""),
-        linkSeq: linksForAsset.length,
-        links: linksForAsset.length
-          ? linksForAsset
-          : [{ id: 1, title: "", url: "" }],
-        placementMode: row.placement_mode === "random" ? "random" : "fixed",
-        placementPosition: String(row.placement_position || "1"),
-        linkLayout: row.link_layout === "vertical" ? "vertical" : "horizontal"
-      };
-
-      assetBlocks.push(block);
-    });
-
-    localStorage.setItem(SUPABASE_ROOM_ID_KEY, room.id);
     return true;
   } catch (error) {
-    console.error("Supabaseからの読み込みに失敗しました", error);
-    alert(`Supabaseからの読み込みに失敗しました。\n${error.message || error}`);
+    console.error("保存データの読み込みに失敗しました", error);
     return false;
   }
 }
+
 
     function addAssetBlock(){
       if (assetBlocks.length >= 8) return;
@@ -2667,128 +2560,68 @@ ${positionOptions.map(position => {
       });
     }
 
-    function makeStoragePath(roomId, assetId, fileName, kind){
-  const safeName = String(fileName || "image").replace(/[^a-zA-Z0-9._-]/g, "_");
-  const extension = safeName.includes(".")
-    ? safeName.split(".").pop()
-    : "jpg";
-  return `rooms/${roomId}/assets/${assetId}/${kind}-${crypto.randomUUID()}.${extension}`;
-}
+    async function uploadFrameAsset(blockId, file){
+      const block = getAssetBlock(blockId);
+      if (!block || !file) return;
 
-async function uploadToSupabaseStorage(file, path){
-  const { error } = await supabaseClient.storage
-    .from(STORAGE_BUCKET)
-    .upload(path, file, {
-      cacheControl: "3600",
-      upsert: false,
-      contentType: file.type || "image/*"
-    });
+      block.frameUploadStatus = "📦 Uploading...";
+      block.frameUploadName = file.name;
+      block.frameUploadAspect = await measureImageAspect(file);
+      block.frameImageAdjust = { ...FRAME_ADJUST_DEFAULT };
+      renderAssetBlocks();
 
-  if (error) {
-    throw error;
-  }
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("upload_preset", "xclvmgww");
 
-  const { data } = supabaseClient.storage
-    .from(STORAGE_BUCKET)
-    .getPublicUrl(path);
+        const res = await fetch(`https://api.cloudinary.com/v1_1/Ctce3xjm/image/upload`, {
+          method: "POST",
+          body: formData
+        });
 
-  return data.publicUrl;
-}
+        const data = await res.json();
+        block.frameUploadUrl = data.secure_url || "";
+        block.frameUploadStatus = block.frameUploadUrl ? "🏠 Complete" : "⚠ Upload failed";
+      } catch (error) {
+        block.frameUploadUrl = "";
+        block.frameUploadStatus = "⚠ Upload failed";
+      }
 
-async function uploadFrameAsset(blockId, file){
-  const block = getAssetBlock(blockId);
-  if (!block || !file) return;
-
-  block.frameUploadStatus = "📦 Supabase Storageへアップロード中...";
-  block.frameUploadName = file.name;
-  block.frameUploadAspect = await measureImageAspect(file);
-  block.frameImageAdjust = { ...FRAME_ADJUST_DEFAULT };
-  renderAssetBlocks();
-
-  try {
-    if (!state.roomId) {
-      state.roomId = crypto.randomUUID();
+      renderAssetBlocks();
+      renderPreview();
     }
 
-    const assetId = crypto.randomUUID();
-    const path = makeStoragePath(state.roomId, assetId, file.name, "frame");
-    block.supabaseAssetId = assetId;
-    block.frameUploadUrl = await uploadToSupabaseStorage(file, path);
-    block.frameUploadStatus = block.frameUploadUrl
-      ? "🏠 Supabase Storageへ保存しました"
-      : "⚠ Upload failed";
-  } catch (error) {
-    console.error("Frame画像のアップロードに失敗しました", error);
-    block.frameUploadUrl = "";
-    block.frameUploadStatus = `⚠ Upload failed: ${error.message || error}`;
-  }
+    async function uploadOriginalAsset(blockId, file){
+      const block = getAssetBlock(blockId);
+      if (!block || !file) return;
 
-  renderAssetBlocks();
-  renderPreview();
-}
+      block.uploadStatus = "📦 Uploading...";
+      block.uploadName = file.name;
+      block.uploadAspect = await measureImageAspect(file);
+      renderAssetBlocks();
 
-async function uploadOriginalAsset(blockId, file){
-  const block = getAssetBlock(blockId);
-  if (!block || !file) return;
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("upload_preset", "xclvmgww");
 
-  block.uploadStatus = "📦 Supabase Storageへアップロード中...";
-  block.uploadName = file.name;
-  block.uploadAspect = await measureImageAspect(file);
-  renderAssetBlocks();
+        const res = await fetch(`https://api.cloudinary.com/v1_1/Ctce3xjm/image/upload`, {
+          method: "POST",
+          body: formData
+        });
 
-  try {
-    if (!state.roomId) {
-      state.roomId = crypto.randomUUID();
+        const data = await res.json();
+        block.uploadUrl = data.secure_url || "";
+        block.uploadStatus = block.uploadUrl ? "🏠 Complete" : "⚠ Upload failed";
+      } catch (error) {
+        block.uploadUrl = "";
+        block.uploadStatus = "⚠ Upload failed";
+      }
+
+      renderAssetBlocks();
+      renderPreview();
     }
-
-    const assetId = crypto.randomUUID();
-    const path = makeStoragePath(state.roomId, assetId, file.name, "original");
-    block.supabaseAssetId = assetId;
-    block.uploadUrl = await uploadToSupabaseStorage(file, path);
-    block.uploadStatus = block.uploadUrl
-      ? "🏠 Supabase Storageへ保存しました"
-      : "⚠ Upload failed";
-  } catch (error) {
-    console.error("オリジナル画像のアップロードに失敗しました", error);
-    block.uploadUrl = "";
-    block.uploadStatus = `⚠ Upload failed: ${error.message || error}`;
-  }
-
-  renderAssetBlocks();
-  renderPreview();
-}
-
-async function uploadBackgroundImage(file){
-  if (!file) return;
-
-  state.backgroundUploadStatus = "📦 Supabase Storageへアップロード中...";
-  state.backgroundUploadName = file.name;
-  state.backgroundUploadAspect = await measureImageAspect(file);
-  syncBackgroundUploadUI();
-
-  try {
-    if (!state.roomId) {
-      state.roomId = crypto.randomUUID();
-    }
-
-    const path = `rooms/${state.roomId}/background/${crypto.randomUUID()}-${String(file.name || "background").replace(/[^a-zA-Z0-9._-]/g, "_")}`;
-    state.backgroundUploadUrl = await uploadToSupabaseStorage(file, path);
-    state.backgroundUploadStatus = state.backgroundUploadUrl
-      ? "🏠 Supabase Storageへ保存しました"
-      : "⚠ Upload failed";
-
-    if (state.backgroundUploadUrl) {
-      state.roomId = state.roomId;
-    }
-  } catch (error) {
-    console.error("部屋画像のアップロードに失敗しました", error);
-    state.backgroundUploadUrl = "";
-    state.backgroundUploadStatus = `⚠ Upload failed: ${error.message || error}`;
-  }
-
-  syncBackgroundUploadUI();
-  renderPreview();
-}
 
     function randomFrom(list){
       return list[Math.floor(Math.random() * list.length)];
@@ -3167,7 +3000,7 @@ async function uploadBackgroundImage(file){
       document.querySelectorAll("[data-room]").forEach(card => {
         card.classList.toggle(
           "selected",
-          !state.backgroundUploadUrl && card.dataset.room === state.backgroundId
+          !state.backgroundUploadUrl && card.dataset.room === state.roomId
         );
       });
 
@@ -3208,11 +3041,47 @@ async function uploadBackgroundImage(file){
       }
     }
 
+    async function uploadBackgroundImage(file){
+      if (!file) return;
+
+      state.backgroundUploadStatus = "📦 Uploading...";
+      state.backgroundUploadName = file.name;
+      state.backgroundUploadAspect = await measureImageAspect(file);
+      syncBackgroundUploadUI();
+
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("upload_preset", "xclvmgww");
+
+        const res = await fetch("https://api.cloudinary.com/v1_1/Ctce3xjm/image/upload", {
+          method: "POST",
+          body: formData
+        });
+
+        const data = await res.json();
+        state.backgroundUploadUrl = data.secure_url || "";
+        state.backgroundUploadStatus = state.backgroundUploadUrl
+          ? "🏠 Complete"
+          : "⚠ Upload failed";
+
+        if (state.backgroundUploadUrl) {
+          state.roomId = "";
+        }
+      } catch (error) {
+        state.backgroundUploadUrl = "";
+        state.backgroundUploadStatus = "⚠ Upload failed";
+      }
+
+      syncBackgroundUploadUI();
+      renderPreview();
+    }
+
     function renderPreview(){
       applyFrameTheme();
       syncBackgroundUploadUI();
 
-      const room = rooms.find(r => r.id === state.backgroundId) || DEFAULT_BACKGROUND;
+      const room = rooms.find(r => r.id === state.roomId) || DEFAULT_BACKGROUND;
       const frame = frames.find(f => f.id === state.frameId) || frames[0];
       const hasUploadedBackground = Boolean(state.backgroundUploadUrl);
       const backgroundSrc = hasUploadedBackground
@@ -3359,7 +3228,7 @@ if (assetDescription) {
     }
 
     function setRoom(id){
-      state.backgroundId = id;
+      state.roomId = id;
       state.backgroundUploadUrl = "";
       state.backgroundUploadName = "";
       state.backgroundUploadStatus = "";
@@ -3718,190 +3587,50 @@ if (linkTitleInput) {
       }
     });
 
-saveButton.addEventListener("click", async () => {
-  saveButton.disabled = true;
-  saveButton.textContent = "保存中...";
+saveButton.addEventListener("click", () => {
+  const existingSaveData = localStorage.getItem(SAVE_STORAGE_KEY);
 
-  try {
-    if (!state.roomId) {
-      state.roomId = crypto.randomUUID();
+  if (existingSaveData) {
+    const shouldOverwrite = confirm(
+      "すでに保存されています。\n上書きしますか？"
+    );
+
+    if (!shouldOverwrite) {
+      return;
     }
-
-    const selectedBackground = rooms.find(room => room.id === state.backgroundId) || DEFAULT_BACKGROUND;
-    const backgroundValue = state.backgroundUploadUrl || selectedBackground.src;
-
-    const frame = frames.find(item => item.id === state.frameId) || frames[0];
-
-    const { error: roomError } = await supabaseClient
-      .from("rooms")
-      .upsert({
-        id: state.roomId,
-        background: backgroundValue,
-        theme: frame.id,
-        is_published: false
-      }, {
-        onConflict: "id"
-      });
-
-    if (roomError) {
-      throw roomError;
-    }
-
-    /*
-     * 今回は「編集画面の現在状態で上書き」を優先します。
-     * 既存のassets / linksをいったん削除してから、
-     * 現在の8個までのブロックを入れ直します。
-     */
-    const { data: oldAssets, error: oldAssetsError } = await supabaseClient
-      .from("assets")
-      .select("id")
-      .eq("room_id", state.roomId);
-
-    if (oldAssetsError) {
-      throw oldAssetsError;
-    }
-
-    const oldAssetIds = (oldAssets || []).map(row => row.id);
-
-    if (oldAssetIds.length > 0) {
-      const { error: deleteLinksError } = await supabaseClient
-        .from("links")
-        .delete()
-        .in("asset_id", oldAssetIds);
-
-      if (deleteLinksError) {
-        throw deleteLinksError;
-      }
-    }
-
-    const { error: deleteAssetsError } = await supabaseClient
-      .from("assets")
-      .delete()
-      .eq("room_id", state.roomId);
-
-    if (deleteAssetsError) {
-      throw deleteAssetsError;
-    }
-
-    const assetRows = assetBlocks.slice(0, 8).map((block, index) => {
-      const frameAsset =
-        block.type === "frame"
-          ? (frameAssets.find(item => item.id === block.selectedAssetId)?.src || null)
-          : null;
-
-      const objectAsset =
-        block.type === "object"
-          ? (objectAssets.find(item => item.id === block.selectedAssetId)?.src || null)
-          : null;
-
-      const displayImageUrl =
-        block.type === "frame"
-          ? (block.frameUploadUrl || null)
-          : block.type === "original"
-            ? (block.uploadUrl || null)
-            : null;
-
-      const originalImageUrl =
-        block.type === "original"
-          ? (block.uploadUrl || null)
-          : block.type === "frame"
-            ? (block.frameUploadUrl || null)
-            : null;
-
-      const rowId = block.supabaseAssetId || crypto.randomUUID();
-      block.supabaseAssetId = rowId;
-
-      return {
-        id: rowId,
-        room_id: state.roomId,
-        asset_type: block.type,
-        frame_asset: frameAsset,
-        object_asset: objectAsset,
-        image_url: displayImageUrl,
-        original_image_url: originalImageUrl,
-        title: block.title || null,
-        description: block.description || null,
-        placement_position: Number(block.placementPosition || 1),
-        placement_mode: block.placementMode === "random" ? "random" : "fixed",
-        sort_order: index,
-        frame_image_x:
-          block.type === "frame"
-            ? normalizeFrameImageAdjust(block.frameImageAdjust).x
-            : null,
-        frame_image_y:
-          block.type === "frame"
-            ? normalizeFrameImageAdjust(block.frameImageAdjust).y
-            : null,
-        frame_image_scale:
-          block.type === "frame"
-            ? normalizeFrameImageAdjust(block.frameImageAdjust).scale
-            : null,
-        link_layout: block.linkLayout === "vertical" ? "vertical" : "horizontal"
-      };
-    });
-
-    if (assetRows.length > 0) {
-      const { error: insertAssetsError } = await supabaseClient
-        .from("assets")
-        .insert(assetRows);
-
-      if (insertAssetsError) {
-        throw insertAssetsError;
-      }
-    }
-
-    const linkRows = [];
-
-    assetBlocks.slice(0, 8).forEach((block, assetIndex) => {
-      const assetRow = assetRows[assetIndex];
-      if (!assetRow) return;
-
-      (block.links || []).forEach((link, linkIndex) => {
-        const url = String(link?.url || "").trim();
-        if (!url) return;
-
-        linkRows.push({
-          id: crypto.randomUUID(),
-          asset_id: assetRow.id,
-          url,
-          title: String(link?.title || "").trim() || null,
-          sort_order: linkIndex
-        });
-      });
-    });
-
-    if (linkRows.length > 0) {
-      const { error: insertLinksError } = await supabaseClient
-        .from("links")
-        .insert(linkRows);
-
-      if (insertLinksError) {
-        throw insertLinksError;
-      }
-    }
-
-    localStorage.setItem(SUPABASE_ROOM_ID_KEY, state.roomId);
-
-    alert("Supabaseに保存しました");
-  } catch (error) {
-    console.error("Supabaseへの保存に失敗しました", error);
-    alert(`Supabaseへの保存に失敗しました。\n${error.message || error}`);
-  } finally {
-    saveButton.disabled = false;
-    saveButton.textContent = "保存";
   }
+
+  const saveData = {
+    schemaVersion: SAVE_SCHEMA_VERSION,
+    savedAt: new Date().toISOString(),
+    state: {
+      roomId: state.roomId,
+      backgroundUploadUrl: state.backgroundUploadUrl,
+      backgroundUploadName: state.backgroundUploadName,
+      backgroundUploadStatus: state.backgroundUploadStatus,
+      backgroundUploadAspect: state.backgroundUploadAspect,
+      frameId: state.frameId
+    },
+    assetBlocks: assetBlocks
+  };
+
+  localStorage.setItem(
+    SAVE_STORAGE_KEY,
+    JSON.stringify(saveData)
+  );
+
+  alert("保存しました");
 });
+
 
 
 buildRoomGrid();
 buildFrameGrid();
 buildAssetGrid();
 
-(async () => {
-  await loadSavedData();
-  renderAssetBlocks();
-  renderPreview();
-})();
+loadSavedData();
+
+renderAssetBlocks();
 
 function closeAssetLinkPopup(){
   assetLinkPopup.classList.add("hidden");
