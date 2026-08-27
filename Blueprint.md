@@ -121,7 +121,7 @@ room001_yoimitsu
 
 ```text
 https://roomfolio.com/room001_yoimitsu
-
+```
 
 #### ユーザーIDと認証ID
 
