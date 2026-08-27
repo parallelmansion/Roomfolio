@@ -1,3 +1,5 @@
+https://github.com/parallelmansion/Roomfolio/blob/main/Blueprint.md
+
 # Roomfolio Blueprint
 
 
@@ -145,9 +147,16 @@ room001_yoimitsu
 
 **公開URL**
 
+公開Roomは、ユーザーIDをURLのパスとして使用する。
+
 ```text
-https://roomfolio.com/room001_yoimitsu
+/{ユーザーID}
+
+例：
+/room001_yoimitsu
 ```
+
+公開Room URLの基準URLは、Stage 3 : Public Roomの実装前に決定する。
 
 #### ユーザーIDと認証ID
 
@@ -276,11 +285,13 @@ Default.webpは初期背景で、選択肢には含めない。
 公開されたRoomは、ユーザーIDを使用してアクセスできる。
 
 ```text
-https://roomfolio.com/{ユーザーID}
+/{ユーザーID}
 
 例：
-https://roomfolio.com/room001_yoimitsu
+/room001_yoimitsu
 ```
+
+公開Room URLの基準URLは、Stage 3 : Public Roomの実装前に決定する。
 
 
 ### 決定事項
