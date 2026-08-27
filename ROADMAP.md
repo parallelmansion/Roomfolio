@@ -90,8 +90,9 @@ Loginと作者用Homeは別ページですが、
 
 - 自分のRoomを表示する
 - 自分の公開ユーザーIDを確認できる
-- 自分の公開Room URLを確認・共有できる
 - Editへの入口を用意する
+
+公開Room URLの確認・共有は、Stage 3 : Public Roomで実装する。
 
 作者用HomeとEdit画面は別ページとして扱います。
 
@@ -130,7 +131,7 @@ Roomを自動作成せず、操作を停止して案内します。
 - 既存Email Authユーザーが `/login` からログインできる
 - ログイン成功後、作者用Homeへ進める
 - 作者用Homeで自分のRoomを確認できる
-- 公開ユーザーIDと公開Room URLを確認できる
+- 公開ユーザーIDを確認できる
 - HomeからEditへ進める
 - Roomが存在しない場合に自動作成しない
 
@@ -231,6 +232,8 @@ links
 
 ## 対象
 
+- 公開Room URLの基準URLを決定する
+- 作者用Homeで公開Room URLを確認・共有できるようにする
 - 公開ユーザーIDからRoomを取得する
 - 公開状態を確認する
 - Roomを表示する
@@ -257,6 +260,8 @@ Stage 3の実装前にRLS・Storageの詳細を確認します。
 
 ## 完了条件
 
+- 公開Room URLの基準URLが決定されている
+- 作者用Homeで自分の公開Room URLを確認・共有できる
 - `/{roomfolio_user_id}` で公開Roomへ到達できる
 - 訪問者はログインせず閲覧できる
 - 非公開Roomは訪問者へ公開されない
