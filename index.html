@@ -202,6 +202,13 @@
       border-radius: 20px;
       color: var(--accent);
       background: var(--accent-soft);
+      text-decoration: none;
+    }
+
+    .edit-entry:hover,
+    .edit-entry:focus-visible {
+      border-color: var(--accent);
+      outline: none;
     }
 
     .edit-entry-title { font-size: 0.94rem; font-weight: 750; }
@@ -326,10 +333,10 @@
             <p class="identity-help">公開Room URLの確認・共有は、Stage 3で実装します。</p>
           </section>
 
-          <section class="edit-entry" aria-label="Editへの入口">
+          <a class="edit-entry" href="/edit" aria-label="Roomを編集する">
             <span class="edit-entry-title">Roomを編集する</span>
-            <span class="edit-entry-note">編集機能はStage 2で利用可能になります。</span>
-          </section>
+            <span class="edit-entry-note">背景・assets・links・themeを編集できます。</span>
+          </a>
         </aside>
       </div>
 
