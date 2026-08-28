@@ -1862,6 +1862,20 @@ const saveButton = document.getElementById("applyBtn");
 const SUPABASE_URL = "https://ziffnnsgouvsfkxnoqos.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_I1-V0IFZN7ufm4tH6jGJRQ_q0Vmhyqv";
 const STORAGE_BUCKET = "roomfolio";
+const STAGE21_MANAGED_PREFIX = "s21-";
+const STAGE21_MANAGED_FOLDERS = [
+  "background",
+  "uploads/frame",
+  "uploads/original"
+];
+
+/*
+ * Stage 2.1では導入後の新規画像だけをs21- prefixで識別します。
+ * 既存Storage objectはこの集合に含めず、初回cleanupの対象にしません。
+ */
+let stage21PersistedStoragePathsBeforeSave = new Set();
+let stage21SessionManagedUploadPaths = new Set();
+
 let currentRoomId = null;
 let editorUnavailableMessage = "";
 
@@ -2218,6 +2232,17 @@ async function loadSavedData(){
     // 保存済みオリジナル画像の実寸比率を取得してから表示へ進む。
     // これにより、再読み込み時だけ1:1になることを防ぐ。
     await restoreSavedOriginalRatios();
+
+    /*
+     * 保存前の参照集合は、今回の保存で不要になったStage 2.1画像だけを
+     * 判定するために使います。既存prefixなしobjectはcleanup対象にしません。
+     */
+    stage21PersistedStoragePathsBeforeSave = collectStoredRoomImagePaths(
+      room,
+      assetRows || [],
+      currentRoomId
+    );
+    stage21SessionManagedUploadPaths.clear();
 
     return true;
   } catch (error) {
@@ -2764,7 +2789,166 @@ ${positionOptions.map(position => {
       const roomId = getCurrentRoomIdOrThrow();
       const safeName = String(fileName || "image").replace(/[^a-zA-Z0-9._-]/g, "_");
       const extension = safeName.includes(".") ? safeName.split(".").pop() : "jpg";
-      return `rooms/${roomId}/uploads/${kind}/${crypto.randomUUID()}.${extension}`;
+      return `rooms/${roomId}/uploads/${kind}/${STAGE21_MANAGED_PREFIX}${crypto.randomUUID()}.${extension}`;
+    }
+
+    function storageObjectPathFromStoredValue(value, roomId){
+      const storedValue = String(value || "").trim();
+      const publicPrefix = `${SUPABASE_URL}/storage/v1/object/public/${STORAGE_BUCKET}/`;
+
+      if (!storedValue.startsWith(publicPrefix)) return null;
+
+      const objectPath = storedValue.slice(publicPrefix.length);
+      const roomPrefix = `rooms/${roomId}/`;
+      return objectPath.startsWith(roomPrefix) ? objectPath : null;
+    }
+
+    function isStage21ManagedStoragePath(path, roomId){
+      const objectPath = String(path || "");
+      const roomPrefix = `rooms/${roomId}/`;
+      const fileName = objectPath.split("/").pop() || "";
+
+      return objectPath.startsWith(roomPrefix)
+        && STAGE21_MANAGED_FOLDERS.some(folder => objectPath.startsWith(`${roomPrefix}${folder}/`))
+        && fileName.startsWith(STAGE21_MANAGED_PREFIX);
+    }
+
+    function collectStoredRoomImagePaths(room, assetRows, roomId){
+      const paths = new Set();
+      const values = [room?.background];
+
+      (assetRows || []).forEach(asset => {
+        values.push(asset?.image_url, asset?.original_image_url);
+      });
+
+      values.forEach(value => {
+        const objectPath = storageObjectPathFromStoredValue(value, roomId);
+        if (objectPath) paths.add(objectPath);
+      });
+
+      return paths;
+    }
+
+    async function readStoredRoomImagePaths(roomId){
+      const { data: savedRoom, error: savedRoomError } = await supabaseClient
+        .from("rooms")
+        .select("background")
+        .eq("id", roomId)
+        .single();
+
+      if (savedRoomError) throw savedRoomError;
+
+      const { data: savedAssets, error: savedAssetsError } = await supabaseClient
+        .from("assets")
+        .select("image_url, original_image_url")
+        .eq("room_id", roomId);
+
+      if (savedAssetsError) throw savedAssetsError;
+
+      return collectStoredRoomImagePaths(savedRoom, savedAssets || [], roomId);
+    }
+
+    async function listStage21ManagedStorageObjects(roomId){
+      const files = [];
+
+      for (const folder of STAGE21_MANAGED_FOLDERS) {
+        const folderPath = `rooms/${roomId}/${folder}`;
+        const { data, error } = await supabaseClient.storage
+          .from(STORAGE_BUCKET)
+          .list(folderPath, {
+            limit: 100,
+            offset: 0,
+            sortBy: { column: "created_at", order: "asc" }
+          });
+
+        if (error) throw error;
+
+        (data || []).forEach(file => {
+          const objectPath = `${folderPath}/${file.name}`;
+          if (isStage21ManagedStoragePath(objectPath, roomId)) {
+            files.push({
+              path: objectPath,
+              createdAt: String(file.created_at || ""),
+              updatedAt: String(file.updated_at || "")
+            });
+          }
+        });
+      }
+
+      return files;
+    }
+
+    async function cleanupStage21ManagedImagesAfterSuccessfulSave(roomId){
+      if (stage21SessionManagedUploadPaths.size === 0) {
+        return { status: "not-required", removedPaths: [] };
+      }
+
+      const currentStoragePaths = await readStoredRoomImagePaths(roomId);
+      const candidatePaths = new Set(
+        [
+          ...stage21PersistedStoragePathsBeforeSave,
+          ...stage21SessionManagedUploadPaths
+        ].filter(path =>
+          isStage21ManagedStoragePath(path, roomId)
+          && !currentStoragePaths.has(path)
+        )
+      );
+      const managedFiles = await listStage21ManagedStorageObjects(roomId);
+      const excessCount = Math.max(0, managedFiles.length - 10);
+
+      stage21PersistedStoragePathsBeforeSave = currentStoragePaths;
+
+      if (excessCount === 0) {
+        stage21SessionManagedUploadPaths.clear();
+        return { status: "not-required", removedPaths: [] };
+      }
+
+      const pathsToRemove = managedFiles
+        .filter(file => candidatePaths.has(file.path))
+        .sort((a, b) =>
+          a.createdAt.localeCompare(b.createdAt)
+          || a.path.localeCompare(b.path)
+        )
+        .slice(0, excessCount)
+        .map(file => file.path);
+
+      if (pathsToRemove.length === 0) {
+        stage21SessionManagedUploadPaths.clear();
+        return {
+          status: "protected",
+          removedPaths: [],
+          excessCount
+        };
+      }
+
+      const { error: removeError } = await supabaseClient.storage
+        .from(STORAGE_BUCKET)
+        .remove(pathsToRemove);
+
+      if (removeError) throw removeError;
+
+      stage21SessionManagedUploadPaths.clear();
+      return {
+        status: "removed",
+        removedPaths: pathsToRemove,
+        excessCount
+      };
+    }
+
+    function formatStage21CleanupMessage(cleanupResult){
+      if (!cleanupResult || cleanupResult.status === "not-required") {
+        return "";
+      }
+
+      if (cleanupResult.status === "removed") {
+        return `\nStage 2.1: 未使用画像を${cleanupResult.removedPaths.length}件整理しました。`;
+      }
+
+      if (cleanupResult.status === "protected") {
+        return "\nStage 2.1: 使用中画像を保護するため、画像整理は行いませんでした。";
+      }
+
+      return "";
     }
 
     async function uploadToSupabaseStorage(file, path){
@@ -2798,6 +2982,7 @@ ${positionOptions.map(position => {
       try {
         const path = makeStoragePath("frame", file.name);
         block.frameUploadUrl = await uploadToSupabaseStorage(file, path);
+        stage21SessionManagedUploadPaths.add(path);
         block.frameUploadStatus = block.frameUploadUrl
           ? "🏠 Supabase Storageへ保存しました"
           : "⚠ Upload failed";
@@ -2823,6 +3008,7 @@ ${positionOptions.map(position => {
       try {
         const path = makeStoragePath("original", file.name);
         block.uploadUrl = await uploadToSupabaseStorage(file, path);
+        stage21SessionManagedUploadPaths.add(path);
         block.uploadStatus = block.uploadUrl
           ? "🏠 Supabase Storageへ保存しました"
           : "⚠ Upload failed";
@@ -3494,9 +3680,10 @@ ${positionOptions.map(position => {
 
       try {
                 const roomId = getCurrentRoomIdOrThrow();
-        const path = `rooms/${roomId}/background/${crypto.randomUUID()}-${String(file.name || "background").replace(/[^a-zA-Z0-9._-]/g, "_")}`;
-
+                const path = `rooms/${roomId}/background/${STAGE21_MANAGED_PREFIX}${crypto.randomUUID()}-${String(file.name || "background").replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+	
         state.backgroundUploadUrl = await uploadToSupabaseStorage(file, path);
+        stage21SessionManagedUploadPaths.add(path);
         state.backgroundUploadStatus = state.backgroundUploadUrl
           ? "🏠 Supabase Storageへ保存しました"
           : "⚠ Upload failed";
@@ -4251,7 +4438,17 @@ saveButton.addEventListener("click", async () => {
       JSON.stringify(saveData)
     );
 
-    alert(`Supabaseに保存しました（rooms + assets: ${assetRows.length}件 / links: ${linkRows.length}件）`);
+    let cleanupMessage = "";
+
+    try {
+      const cleanupResult = await cleanupStage21ManagedImagesAfterSuccessfulSave(roomId);
+      cleanupMessage = formatStage21CleanupMessage(cleanupResult);
+    } catch (cleanupError) {
+      console.error("Stage 2.1のStorage画像整理に失敗しました", cleanupError);
+      cleanupMessage = "\nStage 2.1: 保存は完了しましたが、画像整理は完了しませんでした。";
+    }
+
+    alert(`Supabaseに保存しました（rooms + assets: ${assetRows.length}件 / links: ${linkRows.length}件）${cleanupMessage}`);
   } catch (error) {
     console.error("Supabaseへの保存に失敗しました", error);
     alert(`Supabaseへの保存に失敗しました。\n${error.message || error}`);
