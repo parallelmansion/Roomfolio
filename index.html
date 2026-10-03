@@ -194,6 +194,19 @@
       line-height: 1.65;
     }
 
+    .public-controls { display: grid; gap: 10px; padding: 0 20px 20px; }
+    .public-url { overflow-wrap: anywhere; color: var(--muted); font-size: .78rem; line-height: 1.55; }
+    .public-status { font-size: .82rem; font-weight: 700; }
+    .public-status.is-published { color: var(--accent); }
+    .public-status.is-private { color: var(--muted); }
+    .control-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .control-button {
+      min-height: 38px; padding: 8px 11px; border: 1px solid var(--line); border-radius: 9px;
+      color: var(--ink); background: #fff; font: inherit; font-size: .8rem; font-weight: 700; cursor: pointer;
+    }
+    .control-button.primary { border-color: var(--accent); color: #fff; background: var(--accent); }
+    .control-button:disabled { cursor: wait; opacity: .55; }
+
     .edit-entry {
       display: grid;
       gap: 8px;
@@ -330,7 +343,15 @@
           <section class="identity-card" aria-labelledby="user-id-title">
             <h2 id="user-id-title" class="card-heading">公開ユーザーID</h2>
             <p id="public-user-id" class="identity-value">—</p>
-            <p class="identity-help">公開Room URLの確認・共有は、Stage 3で実装します。</p>
+            <div class="public-controls">
+              <p id="public-status" class="public-status is-private">非公開</p>
+              <div id="public-url" class="public-url">公開URLを準備しています。</div>
+              <div class="control-row">
+                <button id="publish-toggle" class="control-button primary" type="button">公開する</button>
+                <button id="copy-url" class="control-button" type="button">URLをコピー</button>
+                <button id="share-url" class="control-button" type="button" hidden>共有</button>
+              </div>
+            </div>
           </section>
 
           <a class="edit-entry" href="/edit" aria-label="Roomを編集する">
@@ -366,7 +387,14 @@
       const assetCount = document.getElementById("asset-count");
       const assetList = document.getElementById("asset-list");
       const emptyAssets = document.getElementById("empty-assets");
+      const publicStatus = document.getElementById("public-status");
+      const publicUrl = document.getElementById("public-url");
+      const publishToggle = document.getElementById("publish-toggle");
+      const copyUrlButton = document.getElementById("copy-url");
+      const shareUrlButton = document.getElementById("share-url");
       const supabaseClient = window.supabaseClient;
+      let currentRoom = null;
+      let currentPublicUrl = "";
 
       function setStatus(message, isError = false) {
         statusMessage.textContent = message;
@@ -391,6 +419,52 @@
           return asset.object_asset || "";
         }
         return asset.frame_asset || "";
+      }
+
+      function setPublicControls(room) {
+        currentRoom = room;
+        const userId = String(room?.roomfolio_user_id || "").trim();
+        currentPublicUrl = userId ? `${window.location.origin}/${encodeURIComponent(userId)}` : "";
+        const published = room?.is_published === true;
+        publicStatus.textContent = published ? "公開中" : "非公開（予定公開URL）";
+        publicStatus.classList.toggle("is-published", published);
+        publicStatus.classList.toggle("is-private", !published);
+        publicUrl.textContent = currentPublicUrl || "公開ユーザーIDを確認できないため、URLを表示できません。";
+        publishToggle.disabled = !currentPublicUrl;
+        publishToggle.textContent = published ? "非公開にする" : "公開する";
+        copyUrlButton.disabled = !currentPublicUrl;
+        shareUrlButton.hidden = !navigator.share;
+        shareUrlButton.disabled = !currentPublicUrl;
+      }
+
+      async function copyPublicUrl() {
+        if (!currentPublicUrl) return;
+        try {
+          await navigator.clipboard.writeText(currentPublicUrl);
+          setStatus("公開Room URLをコピーしました。");
+        } catch (error) {
+          setStatus("URLをコピーできませんでした。表示されたURLをコピーしてください。", true);
+        }
+      }
+
+      async function togglePublishState() {
+        if (!currentRoom || !currentPublicUrl) return;
+        const nextPublished = currentRoom.is_published !== true;
+        publishToggle.disabled = true;
+        try {
+          const { error } = await supabaseClient
+            .from("rooms")
+            .update({ is_published: nextPublished })
+            .eq("id", currentRoom.id);
+          if (error) throw error;
+          currentRoom = { ...currentRoom, is_published: nextPublished };
+          setPublicControls(currentRoom);
+          setStatus(nextPublished ? "Roomを公開しました。" : "Roomを非公開にしました。");
+        } catch (error) {
+          console.error("公開状態の更新に失敗しました", error);
+          setStatus("公開状態を更新できませんでした。時間をおいて再度お試しください。", true);
+          setPublicControls(currentRoom);
+        }
       }
 
       function renderAssets(assets) {
@@ -444,7 +518,7 @@
 
           const { data: room, error: roomError } = await supabaseClient
             .from("rooms")
-            .select("id, roomfolio_user_id, background, theme")
+            .select("id, roomfolio_user_id, background, theme, is_published")
             .eq("user_id", authUser.id)
             .maybeSingle();
 
@@ -464,6 +538,7 @@
           if (assetError) throw assetError;
 
           publicUserId.textContent = room.roomfolio_user_id || "—";
+          setPublicControls(room);
           roomTheme.textContent = room.theme ? `Theme: ${room.theme}` : "Theme: —";
 
           if (room.background) {
@@ -481,6 +556,15 @@
           setStatus("Roomfolioを確認できませんでした。時間をおいて再度お試しください。", true);
         }
       }
+
+      publishToggle.addEventListener("click", togglePublishState);
+      copyUrlButton.addEventListener("click", copyPublicUrl);
+      shareUrlButton.addEventListener("click", async () => {
+        if (!currentPublicUrl || !navigator.share) return;
+        try { await navigator.share({ title: "Roomfolio", url: currentPublicUrl }); } catch (error) {
+          if (error?.name !== "AbortError") setStatus("共有を開始できませんでした。", true);
+        }
+      });
 
       loadAuthorHome();
     })();
