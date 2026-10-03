@@ -2357,7 +2357,31 @@ function setAssetLinkLayout(blockId, layout){
     function setAssetPlacementPosition(blockId, position){
       const block = getAssetBlock(blockId);
       if (!block) return;
-      block.placementPosition = String(position || "1");
+      const nextPosition = String(position || "1");
+      const occupiedBlock = assetBlocks.find(otherBlock =>
+        otherBlock.id !== block.id &&
+        otherBlock.placementMode !== "random" &&
+        String(otherBlock.placementPosition || "1") === nextPosition
+      );
+
+      if (occupiedBlock) {
+        const confirmed = window.confirm(
+          `配置位置 ${nextPosition} は「${occupiedBlock.title || "名称未設定のアセット"}」で使用中です。\n` +
+          "このアセットで上書きしますか？"
+        );
+
+        if (!confirmed) {
+          renderAssetBlocks();
+          return;
+        }
+
+        const occupiedIndex = assetBlocks.findIndex(
+          otherBlock => otherBlock.id === occupiedBlock.id
+        );
+        if (occupiedIndex >= 0) assetBlocks.splice(occupiedIndex, 1);
+      }
+
+      block.placementPosition = nextPosition;
       renderAssetBlocks();
       renderPreview();
     }
@@ -2683,7 +2707,6 @@ ${positionOptions.map(position => {
     <option
       value="${position}"
       ${isCurrentPosition ? "selected" : ""}
-      ${isUsedByOtherBlock ? "disabled" : ""}
     >${position}${isUsedByOtherBlock ? "（使用中）" : ""}</option>
   `;
 }).join("")}
@@ -4246,8 +4269,7 @@ saveButton.addEventListener("click", async () => {
         },
         body: JSON.stringify({
           background: backgroundValue,
-          theme: frame.id,
-          is_published: false
+          theme: frame.id
         })
       }
     );

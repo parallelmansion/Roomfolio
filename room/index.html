@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Roomfolio</title>
+  <style>
+    :root { --accent:#94a3b8; --accent-2:#64748b; --panel:rgba(17,24,39,.82); --line:rgba(148,163,184,.34); color-scheme:dark; font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Hiragino Sans","Yu Gothic",sans-serif; }
+    * { box-sizing:border-box; }
+    body { min-width:320px; min-height:100vh; margin:0; background:#111; color:#fff; }
+    .room { position:relative; min-height:100svh; overflow:hidden; display:grid; place-items:center; background:var(--accent-2); }
+    .room-background { position:absolute; inset:0; background:center / contain no-repeat; }
+    .room-background::after { position:absolute; inset:0; content:""; background:rgba(0,0,0,.06); pointer-events:none; }
+    .room-content { position:relative; width:min(100vw,177.78svh); height:min(56.25vw,100svh); min-height:100svh; }
+    .site-mark { position:absolute; z-index:4; top:16px; left:18px; margin:0; color:#fff; font-family:Georgia,serif; font-size:clamp(1.25rem,3vw,1.8rem); font-weight:500; letter-spacing:-.05em; text-shadow:0 1px 10px #000; }
+    .asset-layer { position:absolute; inset:0; z-index:2; }
+    .asset { position:absolute; width:clamp(74px,13vw,220px); aspect-ratio:1; display:grid; place-items:center; padding:0; border:0; background:transparent; cursor:pointer; filter:drop-shadow(0 10px 12px rgba(0,0,0,.34)); }
+    .asset:focus-visible { outline:3px solid var(--accent); outline-offset:5px; border-radius:8px; }
+    .asset img { display:block; max-width:100%; max-height:100%; }
+    .asset.object img, .asset.original img { width:100%; height:100%; object-fit:contain; }
+    .asset.frame { overflow:hidden; }
+    .frame-content { position:absolute; z-index:1; width:74%; height:74%; object-fit:cover; }
+    .frame-overlay { position:relative; z-index:2; width:100%; height:100%; object-fit:contain; }
+    .slot-1 { left:9%; top:17%; } .slot-2 { left:30%; top:12%; } .slot-3 { left:55%; top:15%; } .slot-4 { left:76%; top:20%; }
+    .slot-5 { left:11%; top:59%; } .slot-6 { left:33%; top:65%; } .slot-7 { left:57%; top:61%; } .slot-8 { left:78%; top:59%; }
+    .popup-backdrop { position:fixed; z-index:10; inset:0; display:grid; place-items:center; padding:20px; background:rgba(0,0,0,.48); }
+    .popup-backdrop[hidden] { display:none; }
+    .popup { width:min(100%,480px); max-height:min(74svh,580px); overflow:auto; padding:22px; border:1px solid var(--line); border-radius:18px; background:var(--panel); box-shadow:0 22px 70px rgba(0,0,0,.42); backdrop-filter:blur(12px); }
+    .popup-head { display:flex; align-items:start; justify-content:space-between; gap:16px; }
+    .popup h1 { margin:0; font-size:1.15rem; } .popup p { margin:10px 0 0; color:#f1f4f6; font-size:.9rem; line-height:1.65; white-space:pre-wrap; }
+    .close { flex:0 0 auto; width:34px; height:34px; border:1px solid var(--line); border-radius:9px; color:#fff; background:rgba(255,255,255,.08); font:inherit; cursor:pointer; }
+    .links { display:flex; flex-wrap:wrap; justify-content:center; gap:9px; margin-top:18px; } .links.vertical { flex-direction:column; align-items:stretch; }
+    .links a { padding:10px 13px; border:1px solid var(--line); border-radius:9px; color:#fff; background:rgba(255,255,255,.09); font-size:.86rem; font-weight:700; text-align:center; text-decoration:none; }
+    .notice { width:min(100% - 40px,460px); padding:24px; border:1px solid var(--line); border-radius:18px; color:#fff; background:var(--panel); box-shadow:0 20px 60px rgba(0,0,0,.35); line-height:1.7; text-align:center; }
+    @media (max-width:700px) { .room-content { width:100vw; height:100svh; } .room-background { background-size:cover; background-position:center; } .asset { width:clamp(62px,22vw,126px); } .slot-1 { left:5%;top:13%; }.slot-2 { left:37%;top:10%; }.slot-3 { left:68%;top:15%; }.slot-4 { left:7%;top:38%; }.slot-5 { left:65%;top:40%; }.slot-6 { left:10%;top:65%; }.slot-7 { left:40%;top:70%; }.slot-8 { left:70%;top:66%; } }
+  </style>
+</head>
+<body>
+  <main id="room" class="room" aria-live="polite"><div id="background" class="room-background"></div><div class="room-content"><p class="site-mark">Roomfolio</p><div id="assets" class="asset-layer"></div></div></main>
+  <div id="popup-backdrop" class="popup-backdrop" hidden><section class="popup" role="dialog" aria-modal="true" aria-labelledby="popup-title"><div class="popup-head"><div><h1 id="popup-title">Asset</h1><p id="popup-description"></p></div><button id="close-popup" class="close" type="button" aria-label="閉じる">×</button></div><div id="popup-links" class="links"></div></section></div>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/js/supabase-client.js"></script>
+  <script>
+    (() => {
+      "use strict";
+      const root = document.documentElement, roomEl = document.getElementById("room"), backgroundEl = document.getElementById("background"), assetsEl = document.getElementById("assets"), popupBackdrop = document.getElementById("popup-backdrop"), popupTitle = document.getElementById("popup-title"), popupDescription = document.getElementById("popup-description"), popupLinks = document.getElementById("popup-links");
+      const themes = { slate:["#94a3b8","#64748b","rgba(17,24,39,.82)","rgba(148,163,184,.34)"], walnut:["#c49a6c","#8b6f4e","rgba(46,32,18,.82)","rgba(196,154,108,.32)"], paper:["#ddd6c8","#b9a58c","rgba(35,32,28,.82)","rgba(221,214,200,.32)"], sage:["#9fb2a0","#647a66","rgba(14,22,18,.84)","rgba(159,178,160,.32)"] };
+      const supabaseClient = window.supabaseClient;
+      function fail() { roomEl.innerHTML = '<p class="notice">このRoomは見つかりませんでした。</p>'; }
+      function escapeHtml(value) { return String(value ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;"); }
+      function validUrl(value) { try { const url = new URL(value); return ["http:","https:"].includes(url.protocol) ? url.href : ""; } catch { return ""; } }
+      function shuffledSlots(count) { const slots=[1,2,3,4,5,6,7,8]; for(let i=slots.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[slots[i],slots[j]]=[slots[j],slots[i]];} return slots.slice(0,count); }
+      function applyTheme(id) { const t=themes[id]||themes.slate; root.style.setProperty("--accent",t[0]); root.style.setProperty("--accent-2",t[1]); root.style.setProperty("--panel",t[2]); root.style.setProperty("--line",t[3]); }
+      function closePopup() { popupBackdrop.hidden=true; }
+      function openPopup(asset, links) { popupTitle.textContent=asset.title || "Asset"; popupDescription.textContent=asset.description || ""; popupLinks.innerHTML=""; popupLinks.classList.toggle("vertical",asset.link_layout==="vertical"); (links||[]).forEach(link=>{const href=validUrl(link.url); if(!href)return; const a=document.createElement("a"); a.href=href;a.target="_blank";a.rel="noopener noreferrer";a.textContent=link.title||href;popupLinks.appendChild(a);}); popupBackdrop.hidden=false; }
+      function renderAssets(assets, links) { const randomSlots=shuffledSlots(assets.filter(a=>a.placement_mode==="random").length); let randomIndex=0; assets.forEach(asset=>{ const slot=asset.placement_mode==="random" ? randomSlots[randomIndex++] : Math.min(8,Math.max(1,Number(asset.placement_position)||1)); const button=document.createElement("button"); button.type="button";button.className=`asset ${asset.asset_type||"original"} slot-${slot}`;button.setAttribute("aria-label",asset.title||"Asset"); const label=escapeHtml(asset.title||"Asset"); if(asset.asset_type==="frame"){button.innerHTML=`${asset.image_url?`<img class="frame-content" src="${escapeHtml(asset.image_url)}" alt="">`:""}<img class="frame-overlay" src="${escapeHtml(asset.frame_asset||"")}" alt="${label}">`; } else { const src=asset.asset_type==="object" ? asset.object_asset : (asset.image_url||asset.original_image_url); button.innerHTML=src?`<img src="${escapeHtml(src)}" alt="${label}">`:""; } button.addEventListener("click",()=>openPopup(asset,links.filter(link=>link.asset_id===asset.id))); assetsEl.appendChild(button); }); }
+      async function loadRoom() { if(!supabaseClient){fail();return;} const userId=decodeURIComponent(location.pathname.split("/").filter(Boolean)[0]||""); if(!userId){fail();return;} try { const {data:room,error}=await supabaseClient.from("rooms").select("id,background,theme").eq("roomfolio_user_id",userId).eq("is_published",true).maybeSingle(); if(error||!room){fail();return;} const {data:assets,error:assetError}=await supabaseClient.from("assets").select("id,asset_type,frame_asset,object_asset,image_url,original_image_url,title,description,placement_position,placement_mode,sort_order,link_layout").eq("room_id",room.id).order("sort_order",{ascending:true}); if(assetError)throw assetError; const ids=(assets||[]).slice(0,8).map(a=>a.id); let links=[]; if(ids.length){const result=await supabaseClient.from("links").select("asset_id,url,title,sort_order").in("asset_id",ids).order("sort_order",{ascending:true});if(result.error)throw result.error;links=result.data||[];} applyTheme(room.theme); if(room.background)backgroundEl.style.backgroundImage=`url("${String(room.background).replace(/"/g,"\\\"")}")`; renderAssets((assets||[]).slice(0,8),links); } catch(error) { console.error("公開Roomの読み込みに失敗しました",error);fail(); } }
+      document.getElementById("close-popup").addEventListener("click",closePopup); popupBackdrop.addEventListener("click",event=>{if(event.target===popupBackdrop)closePopup();}); document.addEventListener("keydown",event=>{if(event.key==="Escape")closePopup();}); loadRoom();
+    })();
+  </script>
+</body>
+</html>
